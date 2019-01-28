@@ -73,12 +73,12 @@ class DQN(nn.Module):
     def __init__(self):
         super(DQN, self).__init__()
         layers = []
-        layers += self.conv_layer(3, 16)           # 64 * 128 일때
+        layers += self.conv_layer(6, 16)           # 64 * 128 일때
         layers += self.conv_layer(16, 32)
-        layers += self.conv_layer(32, 64)
-        layers += self.conv_layer(64, 128)
+        layers += self.conv_layer(32, 32)
+        layers += self.conv_layer(32, 32)
         self.model = nn.Sequential(*layers)
-        self.fc1 = nn.Linear(4*8*128, 1000)
+        self.fc1 = nn.Linear(4*8*32, 1000)
         self.fc2 = nn.Linear(1000, 2)
 
     def conv_layer(self, in_channel, out_channel, kernel_size=5, stride=2, padding=2):
@@ -142,14 +142,14 @@ def get_screen():
 
 env.reset()
 
-BATCH_SIZE = 5
+BATCH_SIZE = 800
 GAMMA = 0.999
 EPS_START = 0.9
-EPS_END = 0.05
-EPS_DECAY = 200
+EPS_END = 0.1
+EPS_DECAY = 100
 
 model = DQN()
-# test = model(torch.rand(5, 3, 64, 128))
+# test = model(torch.rand(5, 6, 64, 128))
 
 if use_cuda:
     model.cuda()
@@ -169,13 +169,14 @@ def select_action(model, state, random_select=True):
     if sample > eps_threshold or not random_select:
         pred = model(state)
         _, index = torch.max(pred, 1)
-        return index.view(-1, 1).float()
+        return index.view(-1, 1).float().to(device)
     else:
-        return torch.randint(1, (state.size()[0], 1))
+        return torch.randint(2, (state.size()[0], 1)).to(device)
 
 
 def optimize_model():
     if len(memory) < BATCH_SIZE:
+        print(len(memory))
         return
     state, action, next_state, reward = memory.sample(BATCH_SIZE)
 
@@ -187,6 +188,7 @@ def optimize_model():
                                             next_state)), device=device, dtype=torch.uint8)
     non_final_next_states = torch.cat([s for s in next_state
                                        if s is not None])
+
     state_action_values = model(batch_state).gather(1, batch_action.long())
     next_state_values = torch.zeros(BATCH_SIZE, device=device)
     next_state_values[non_final_mask] = model(non_final_next_states).max(1)[0].detach()
@@ -214,9 +216,9 @@ def plot_durations():
     plt.ylabel('Duration')
     plt.plot(durations_t.numpy())
     # Take 100 episode averages and plot them too
-    if len(durations_t) >= 100:
-        means = durations_t.unfold(0, 100, 1).mean(1).view(-1)
-        means = torch.cat((torch.zeros(99), means))
+    if len(durations_t) >= 20:
+        means = durations_t.unfold(0, 20, 1).mean(1).view(-1)
+        means = torch.cat((torch.zeros(19), means))
         plt.plot(means.numpy())
 
     plt.pause(0.001)  # pause a bit so that plots are updated
@@ -225,7 +227,7 @@ def plot_durations():
         display.display(plt.gcf())
 
 
-num_episodes = 100
+num_episodes = 10000
 memory = ReplayMemory(10000)
 
 
@@ -234,20 +236,20 @@ for i_episode in range(num_episodes):
     env.reset()
     last_screen = get_screen()
     current_screen = get_screen()
-    state = current_screen - last_screen
+    state = torch.cat((current_screen, last_screen), 1)
     for t in count():
         # Select and perform an action.
         action = select_action(model, state)
         a = int(action.item())
         _, reward, done, _ = env.step(a)
-        reward = Tensor([reward])
+        reward = Tensor([reward]).to(device)
 
         # Observe new state
         last_screen = get_screen()
         current_screen = get_screen()
 
         if not done:
-            next_state = current_screen - last_screen
+            next_state = torch.cat((current_screen, last_screen), 1)
         else:
             next_state = None
 
@@ -264,7 +266,8 @@ for i_episode in range(num_episodes):
             episode_durations.append(t + 1)
             plot_durations()
             break
-
+    if i_episode % 100 == 0:
+        torch.save(model.state_dict(), './para.pth')
 
 print('Complete.')
 
